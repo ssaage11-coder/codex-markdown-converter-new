@@ -35,6 +35,37 @@ def write_html(path: Path, content: str) -> None:
         raise MarkdownConversionError(f"Could not write output file {path}: {exc}") from exc
 
 
+def _stash_math_placeholders(markdown_text: str) -> tuple[str, dict[str, str]]:
+    placeholders: dict[str, str] = {}
+
+    def stash(rendered: str) -> str:
+        key = f"\u0001MATH{len(placeholders)}\u0001"
+        placeholders[key] = rendered
+        return key
+
+    pattern = re.compile(r"(?<!\\)\$\$(.+?)(?<!\\)\$\$|(?<!\\)\$(.+?)(?<!\\)\$", re.DOTALL)
+
+    def repl(match: re.Match[str]) -> str:
+        display_expr = match.group(1)
+        inline_expr = match.group(2)
+        if display_expr is not None:
+            expr = html.escape(display_expr.strip(), quote=False)
+            return stash(f'<div class="math math-display">{expr}</div>')
+
+        expr = html.escape(inline_expr.strip(), quote=False)
+        return stash(f'<span class="math math-inline">{expr}</span>')
+
+    processed = pattern.sub(repl, markdown_text)
+    processed = processed.replace(r"\$", "$")
+    return processed, placeholders
+
+
+def _restore_math_placeholders(html_text: str, placeholders: dict[str, str]) -> str:
+    for key, value in placeholders.items():
+        html_text = html_text.replace(key, value).replace(html.escape(key), value)
+    return html_text
+
+
 def convert_inline(markdown_text: str) -> str:
     placeholders: dict[str, str] = {}
 
@@ -71,8 +102,9 @@ def convert_inline(markdown_text: str) -> str:
 
 
 def convert_markdown(markdown_text: str, *, full_document: bool = False) -> str:
-    lines = markdown_text.splitlines()
-    body = _convert_blocks(lines)
+    preprocessed, math_placeholders = _stash_math_placeholders(markdown_text)
+    lines = preprocessed.splitlines()
+    body = _restore_math_placeholders(_convert_blocks(lines), math_placeholders)
     if not full_document:
         return body
     return "\n".join(
