@@ -35,37 +35,6 @@ def write_html(path: Path, content: str) -> None:
         raise MarkdownConversionError(f"Could not write output file {path}: {exc}") from exc
 
 
-def _stash_math_placeholders(markdown_text: str) -> tuple[str, dict[str, str]]:
-    placeholders: dict[str, str] = {}
-
-    def stash(rendered: str) -> str:
-        key = f"\u0001MATH{len(placeholders)}\u0001"
-        placeholders[key] = rendered
-        return key
-
-    pattern = re.compile(r"(?<!\\)\$\$(.+?)(?<!\\)\$\$|(?<!\\)\$(.+?)(?<!\\)\$", re.DOTALL)
-
-    def repl(match: re.Match[str]) -> str:
-        display_expr = match.group(1)
-        inline_expr = match.group(2)
-        if display_expr is not None:
-            expr = html.escape(display_expr.strip(), quote=False)
-            return stash(f'<div class="math math-display">{expr}</div>')
-
-        expr = html.escape(inline_expr.strip(), quote=False)
-        return stash(f'<span class="math math-inline">{expr}</span>')
-
-    processed = pattern.sub(repl, markdown_text)
-    processed = processed.replace(r"\$", "$")
-    return processed, placeholders
-
-
-def _restore_math_placeholders(html_text: str, placeholders: dict[str, str]) -> str:
-    for key, value in placeholders.items():
-        html_text = html_text.replace(key, value).replace(html.escape(key), value)
-    return html_text
-
-
 def convert_inline(markdown_text: str) -> str:
     placeholders: dict[str, str] = {}
 
@@ -73,6 +42,10 @@ def convert_inline(markdown_text: str) -> str:
         key = f"\u0000{len(placeholders)}\u0000"
         placeholders[key] = value
         return key
+
+    def replace_math(match: re.Match[str]) -> str:
+        expr = html.escape(match.group(1).strip(), quote=False)
+        return stash(f'<span class="math math-inline">{expr}</span>')
 
     def replace_code(match: re.Match[str]) -> str:
         return stash(f"<code>{html.escape(match.group(1), quote=False)}</code>")
@@ -87,7 +60,8 @@ def convert_inline(markdown_text: str) -> str:
         href = html.escape(match.group(2), quote=True)
         return stash(f'<a href="{href}">{label}</a>')
 
-    text = re.sub(r"`([^`\n]+)`", replace_code, markdown_text)
+    text = re.sub(r"(?<!\\)\$([^$\n]+?)(?<!\\)\$", replace_math, markdown_text)
+    text = re.sub(r"`([^`\n]+)`", replace_code, text)
     text = html.escape(text, quote=False)
     text = re.sub(r"!\[([^\]]*)\]\(([^)\s]+)\)", replace_image, text)
     text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", replace_link, text)
@@ -102,9 +76,8 @@ def convert_inline(markdown_text: str) -> str:
 
 
 def convert_markdown(markdown_text: str, *, full_document: bool = False) -> str:
-    preprocessed, math_placeholders = _stash_math_placeholders(markdown_text)
-    lines = preprocessed.splitlines()
-    body = _restore_math_placeholders(_convert_blocks(lines), math_placeholders)
+    lines = markdown_text.splitlines()
+    body = _convert_blocks(lines)
     if not full_document:
         return body
     return "\n".join(
@@ -154,6 +127,28 @@ def _convert_blocks(lines: list[str]) -> str:
             if index == len(lines):
                 raise MarkdownConversionError("Unclosed fenced code block.")
             output.append(_render_code_block(code_lines, language))
+            index += 1
+            continue
+
+        if stripped == "$$":
+            flush_paragraph()
+            math_lines: list[str] = []
+            index += 1
+            while index < len(lines) and lines[index].strip() != "$$":
+                math_lines.append(lines[index])
+                index += 1
+            if index == len(lines):
+                raise MarkdownConversionError("Unclosed display math block.")
+            expr = html.escape("\n".join(math_lines).strip(), quote=False)
+            output.append(f'<div class="math math-display">{expr}</div>')
+            index += 1
+            continue
+
+        single_line_display = re.match(r"^\$\$(.+)\$\$$", stripped)
+        if single_line_display:
+            flush_paragraph()
+            expr = html.escape(single_line_display.group(1).strip(), quote=False)
+            output.append(f'<div class="math math-display">{expr}</div>')
             index += 1
             continue
 

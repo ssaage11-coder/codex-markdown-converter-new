@@ -82,6 +82,12 @@ print("hello")
         self.assertIn("$10", result)
         self.assertNotIn('math-inline', result)
 
+    def test_code_span_with_dollar_is_not_math(self) -> None:
+        result = convert_markdown("Use `price = $10` literal.")
+
+        self.assertIn("<code>price = $10</code>", result)
+        self.assertNotIn("math-inline", result)
+
 
 if __name__ == "__main__":
     unittest.main()
