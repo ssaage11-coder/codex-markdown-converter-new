@@ -43,6 +43,10 @@ def convert_inline(markdown_text: str) -> str:
         placeholders[key] = value
         return key
 
+    def replace_math(match: re.Match[str]) -> str:
+        expr = html.escape(match.group(1).strip(), quote=False)
+        return stash(f'<span class="math math-inline">{expr}</span>')
+
     def replace_code(match: re.Match[str]) -> str:
         return stash(f"<code>{html.escape(match.group(1), quote=False)}</code>")
 
@@ -56,7 +60,8 @@ def convert_inline(markdown_text: str) -> str:
         href = html.escape(match.group(2), quote=True)
         return stash(f'<a href="{href}">{label}</a>')
 
-    text = re.sub(r"`([^`\n]+)`", replace_code, markdown_text)
+    text = re.sub(r"(?<!\\)\$([^$\n]+?)(?<!\\)\$", replace_math, markdown_text)
+    text = re.sub(r"`([^`\n]+)`", replace_code, text)
     text = html.escape(text, quote=False)
     text = re.sub(r"!\[([^\]]*)\]\(([^)\s]+)\)", replace_image, text)
     text = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", replace_link, text)
@@ -122,6 +127,28 @@ def _convert_blocks(lines: list[str]) -> str:
             if index == len(lines):
                 raise MarkdownConversionError("Unclosed fenced code block.")
             output.append(_render_code_block(code_lines, language))
+            index += 1
+            continue
+
+        if stripped == "$$":
+            flush_paragraph()
+            math_lines: list[str] = []
+            index += 1
+            while index < len(lines) and lines[index].strip() != "$$":
+                math_lines.append(lines[index])
+                index += 1
+            if index == len(lines):
+                raise MarkdownConversionError("Unclosed display math block.")
+            expr = html.escape("\n".join(math_lines).strip(), quote=False)
+            output.append(f'<div class="math math-display">{expr}</div>')
+            index += 1
+            continue
+
+        single_line_display = re.match(r"^\$\$(.+)\$\$$", stripped)
+        if single_line_display:
+            flush_paragraph()
+            expr = html.escape(single_line_display.group(1).strip(), quote=False)
+            output.append(f'<div class="math math-display">{expr}</div>')
             index += 1
             continue
 

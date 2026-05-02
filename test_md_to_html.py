@@ -68,6 +68,26 @@ print("hello")
         with self.assertRaises(MarkdownConversionError):
             convert_markdown("```python\nprint('missing close')\n")
 
+    def test_inline_and_display_math(self) -> None:
+        source = "Inline $a^2 + b^2 = c^2$ and display:\n\n$$\\int_0^1 x^2 dx$$"
+
+        result = convert_markdown(source)
+
+        self.assertIn('<span class="math math-inline">a^2 + b^2 = c^2</span>', result)
+        self.assertIn('<div class="math math-display">\\int_0^1 x^2 dx</div>', result)
+
+    def test_escaped_dollar_does_not_start_math(self) -> None:
+        result = convert_markdown(r"Price is \$10 and not math.")
+
+        self.assertIn("$10", result)
+        self.assertNotIn('math-inline', result)
+
+    def test_code_span_with_dollar_is_not_math(self) -> None:
+        result = convert_markdown("Use `price = $10` literal.")
+
+        self.assertIn("<code>price = $10</code>", result)
+        self.assertNotIn("math-inline", result)
+
 
 if __name__ == "__main__":
     unittest.main()
